@@ -1,10 +1,11 @@
 import json
-from datetime import datetime
+from http.server import BaseHTTPRequestHandler
 
 # -----------------------
-# In-memory data store
+# Self-contained CyberFlash backend
 # -----------------------
-DATA = {
+# All data stored in memory
+data = {
     "decks": [
         {
             "name": "Network Threats",
@@ -16,36 +17,34 @@ DATA = {
                 }
             ]
         }
-    ],
-    "logs": []
+    ]
 }
+logs = []
 
 # -----------------------
-# Main Vercel-compatible handler
+# HTTP handler
 # -----------------------
-def handler(event, context):
-    method = event.get("httpMethod", "GET")
-    headers = {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*"
-    }
+class handler(BaseHTTPRequestHandler):
+    def _set_headers(self, code=200):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
-    # --- OPTIONS ---
-    if method == "OPTIONS":
-        return {"statusCode": 204, "headers": headers}
+    def do_OPTIONS(self):
+        self._set_headers(204)
 
-    # --- GET (return decks) ---
-    if method == "GET":
-        return {
-            "statusCode": 200,
-            "headers": headers,
-            "body": json.dumps(DATA, indent=2)
-        }
+    def do_GET(self):
+        self._set_headers(200)
+        self.wfile.write(json.dumps(data).encode("utf-8"))
 
-    # --- POST (actions) ---
-    if method == "POST":
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8")
         try:
-            body = json.loads(event.get("body", "{}"))
+            body = json.loads(body)
         except Exception:
             body = {}
 
@@ -54,30 +53,26 @@ def handler(event, context):
 
         if action == "addDeck":
             deck = body.get("deck", "Untitled")
-            DATA["decks"].append({
+            data["decks"].append({
                 "name": deck,
-                "updated": str(datetime.now().date()),
+                "updated": "2025-12-14",
                 "cards": []
             })
             msg = {"ok": True, "message": f"Deck '{deck}' added"}
 
         elif action == "addCard":
             deck_name = body.get("deck")
-            for d in DATA["decks"]:
+            for d in data["decks"]:
                 if d["name"] == deck_name:
-                    d["cards"].append({
-                        "front": body.get("front"),
-                        "back": body.get("back")
-                    })
-                    d["updated"] = str(datetime.now().date())
+                    d["cards"].append({"front": body.get("front"), "back": body.get("back")})
                     msg = {"ok": True, "message": "Card added"}
                     break
             else:
                 msg = {"ok": False, "error": "Deck not found"}
 
         elif action == "logProgress":
-            DATA["logs"].append({
-                "timestamp": datetime.now().isoformat(),
+            logs.append({
+                "timestamp": body.get("timestamp", "now"),
                 "user": body.get("user", "anon"),
                 "deck": body.get("deck", ""),
                 "action": body.get("action", ""),
@@ -85,15 +80,5 @@ def handler(event, context):
             })
             msg = {"ok": True, "message": "Progress logged"}
 
-        return {
-            "statusCode": 200,
-            "headers": headers,
-            "body": json.dumps(msg, indent=2)
-        }
-
-    # --- Unsupported ---
-    return {
-        "statusCode": 405,
-        "headers": headers,
-        "body": json.dumps({"error": "Method not allowed"})
-    }
+        self._set_headers(200)
+        self.wfile.write(json.dumps(msg).encode("utf-8"))
